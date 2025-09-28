@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Card, Typography, Button, Progress, Input } from 'antd'
+import { Card, Typography, Button, Progress, Input, Spin, Alert } from 'antd'
 import { useNavigate } from 'react-router-dom'
+import { fetchQuestion } from '../utils/geminiClient'
 
 const { Title, Paragraph } = Typography
 
@@ -19,6 +20,9 @@ export default function Chat() {
   const [answers, setAnswers] = useState({})
   const timerRef = useRef(null)
   const [input, setInput] = useState('')
+  const [questionText, setQuestionText] = useState('')
+  const [qLoading, setQLoading] = useState(false)
+  const [qError, setQError] = useState(null)
 
   useEffect(() => {
     const candidate = localStorage.getItem('candidateInfo')
@@ -33,6 +37,30 @@ export default function Chat() {
     setTimeLeft(DIFFICULTY_SECONDS[q.difficulty] || 30)
     setInput(answers[q.id] || '')
   }, [index, answers])
+
+  useEffect(() => {
+    let mounted = true
+    const q = QUESTIONS[index]
+    setQError(null)
+    setQLoading(true)
+    setQuestionText('')
+    fetchQuestion(q.difficulty)
+      .then((txt) => {
+        if (!mounted) return
+        setQuestionText(txt || q.text)
+      })
+      .catch((err) => {
+        if (!mounted) return
+        console.warn('fetchQuestion failed', err)
+        setQError(err.message || String(err))
+        setQuestionText(q.text)
+      })
+      .finally(() => {
+        if (!mounted) return
+        setQLoading(false)
+      })
+    return () => { mounted = false }
+  }, [index])
 
   useEffect(() => {
     timerRef.current = setInterval(() => {
@@ -74,7 +102,13 @@ export default function Chat() {
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <Paragraph>{q.text}</Paragraph>
+        {qLoading ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Spin /> Loading question...</div>
+        ) : qError ? (
+          <Alert type="warning" message={`Failed to load dynamic question: ${qError}`} />
+        ) : (
+          <Paragraph>{questionText || q.text}</Paragraph>
+        )}
         <Input.TextArea rows={6} value={input} onChange={(e) => setInput(e.target.value)} placeholder="Type your answer here (auto-submits when timer ends)" />
       </div>
 
