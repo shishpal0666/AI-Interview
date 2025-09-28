@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useNavigate, useLocation, Routes, Route } from 'react-router-dom'
+import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-dom'
 import { Tabs, Layout } from 'antd'
 import Interviewee from './pages/Interviewee'
 import Interviewer from './pages/Interviewer'
@@ -40,8 +40,10 @@ export default function App() {
 
         <div style={{ marginTop: 16 }}>
           <Routes>
+            <Route path="/" element={<Navigate to="/interviewee" replace />} />
             <Route path="/interviewee" element={<Interviewee />} />
             <Route path="/interviewer" element={<Interviewer />} />
+            <Route path="*" element={<Navigate to="/interviewee" replace />} />
           </Routes>
         </div>
       </Content>
