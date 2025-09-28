@@ -1,14 +1,17 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { Card, Typography, Button, Progress, Input, Spin, Alert } from 'antd'
+import { Card, Typography, Button, Progress, Input, Spin, Alert, List, Tag } from 'antd'
 import { useNavigate } from 'react-router-dom'
-import { fetchQuestion } from '../utils/geminiClient'
+import { fetchQuestion, callGemini } from '../utils/geminiClient'
 
 const { Title, Paragraph } = Typography
 
 const QUESTIONS = [
   { id: 1, text: 'Introduce yourself briefly.', difficulty: 'Easy' },
-  { id: 2, text: 'Explain the difference between var, let and const.', difficulty: 'Medium' },
-  { id: 3, text: 'Design a URL shortener and discuss scaling considerations.', difficulty: 'Hard' },
+  { id: 2, text: 'Tell me about a challenging bug you fixed and how you approached it.', difficulty: 'Easy' },
+  { id: 3, text: 'Explain the difference between var, let and const.', difficulty: 'Medium' },
+  { id: 4, text: 'Describe how you would design a REST API for a blog platform.', difficulty: 'Medium' },
+  { id: 5, text: 'Design a URL shortener and discuss scaling considerations.', difficulty: 'Hard' },
+  { id: 6, text: 'Explain how you would design an eventually-consistent distributed counter and trade-offs.', difficulty: 'Hard' },
 ]
 
 const DIFFICULTY_SECONDS = { Easy: 20, Medium: 60, Hard: 120 }
@@ -23,6 +26,10 @@ export default function Chat() {
   const [questionText, setQuestionText] = useState('')
   const [qLoading, setQLoading] = useState(false)
   const [qError, setQError] = useState(null)
+  const [completed, setCompleted] = useState(false)
+  const [summary, setSummary] = useState(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
+  const [summaryError, setSummaryError] = useState(null)
 
   useEffect(() => {
     const candidate = localStorage.getItem('candidateInfo')
@@ -32,11 +39,6 @@ export default function Chat() {
     }
   }, [navigate])
 
-  useEffect(() => {
-    const q = QUESTIONS[index]
-    setTimeLeft(DIFFICULTY_SECONDS[q.difficulty] || 30)
-    setInput(answers[q.id] || '')
-  }, [index, answers])
 
   useEffect(() => {
     let mounted = true
@@ -58,27 +60,113 @@ export default function Chat() {
       .finally(() => {
         if (!mounted) return
         setQLoading(false)
+        try { setTimeLeft(DIFFICULTY_SECONDS[q.difficulty] || 30) } catch { setTimeLeft(30) }
+        setInput((answers && answers[q.id] && answers[q.id].text) || '')
       })
     return () => { mounted = false }
-  }, [index])
+  }, [index, answers])
 
   useEffect(() => {
+    if (qLoading) return
+    clearInterval(timerRef.current)
     timerRef.current = setInterval(() => {
       setTimeLeft((t) => t - 1)
     }, 1000)
     return () => clearInterval(timerRef.current)
-  }, [index])
+  }, [index, qLoading])
 
   const handleSubmit = useCallback(() => {
     const q = QUESTIONS[index]
-    setAnswers((a) => ({ ...a, [q.id]: input }))
+    const qText = questionText || q.text
+
+    const newAnswers = {
+      ...answers,
+      [q.id]: { text: input, questionText: qText, score: null, feedback: null, scoring: true, error: null },
+    }
+    setAnswers(newAnswers)
+
+    ;(async () => {
+      try {
+        const scorePrompt = `You are an experienced full-stack (React/Node) interviewer. Given the question:\n"${qText}"\nAnd the candidate's answer:\n"${input}"\nProvide a numeric score between 0 and 100 (integer) for the answer, and a one-sentence constructive feedback. Return ONLY a JSON object with keys "score" and "feedback". Example: {"score": 73, "feedback": "..."}`
+        const resp = await callGemini(scorePrompt, { temperature: 0.0, maxOutputTokens: 200 })
+
+        let parsed = null
+        const jsonMatch = resp && resp.match(/\{[\s\S]*\}/)
+        if (jsonMatch) {
+          try { parsed = JSON.parse(jsonMatch[0]) } catch { parsed = null }
+        }
+        let score = null
+        let feedback = null
+        if (parsed && typeof parsed.score !== 'undefined') {
+          score = parseInt(parsed.score, 10)
+          feedback = parsed.feedback || null
+        } else {
+          const numMatch = resp && resp.match(/(\d{1,3})/)
+          if (numMatch) {
+            score = Math.max(0, Math.min(100, parseInt(numMatch[1], 10)))
+            feedback = resp.replace(numMatch[0], '').trim()
+            if (!feedback) feedback = null
+          }
+        }
+
+        setAnswers((a) => ({
+          ...a,
+          [q.id]: { text: input, questionText: qText, score, feedback, scoring: false, error: null },
+        }))
+      } catch (err) {
+        console.warn('Scoring failed', err)
+        setAnswers((a) => ({
+          ...a,
+          [q.id]: { text: input, questionText: qText, score: null, feedback: null, scoring: false, error: err.message || String(err) },
+        }))
+      }
+    })()
+
     if (index < QUESTIONS.length - 1) {
       setIndex((i) => i + 1)
     } else {
-      try { localStorage.setItem('lastInterviewAnswers', JSON.stringify({ answers: { ...answers, [q.id]: input }, timestamp: Date.now() })) } catch (err) { console.warn(err) }
-      navigate('/interviewee')
+      try { localStorage.setItem('lastInterviewAnswers', JSON.stringify({ answers: newAnswers, timestamp: Date.now() })) } catch (err) { console.warn(err) }
+      setCompleted(true)
+
+      ;(async () => {
+        setSummaryLoading(true)
+        setSummaryError(null)
+        try {
+          const pairs = Object.keys(newAnswers)
+            .sort((a, b) => Number(a) - Number(b))
+            .map((k) => {
+              const it = newAnswers[k]
+              return `Question ${k}: ${it.questionText}\nAnswer: ${it.text}`
+            })
+            .join('\n\n')
+
+          const summaryPrompt = `You are an experienced interviewer. Given the following question/answer pairs:\n\n${pairs}\n\nProvide a JSON object with keys:\n- "overallScore" (integer 0-100),\n- "perQuestion" (array of objects with keys "id", "score" (0-100 int) and "feedback" (short text)),\n- "summary" (one paragraph overall feedback).\nReturn ONLY valid JSON.`
+
+          const raw = await callGemini(summaryPrompt, { temperature: 0.0, maxOutputTokens: 512 })
+          console.log('Summary API raw response:', raw)
+
+          let parsed = null
+          const jsonMatch = raw && raw.match(/\{[\s\S]*\}/)
+          if (jsonMatch) {
+            try { parsed = JSON.parse(jsonMatch[0]) } catch { parsed = null }
+          }
+          if (!parsed) {
+            setSummaryError('Failed to parse summary JSON from API')
+            setSummary(null)
+            console.warn('Could not parse summary JSON from API response:', raw)
+          } else {
+            setSummary(parsed)
+            console.log('Parsed interview summary:', parsed)
+          }
+        } catch (err) {
+          console.warn('Summary request failed', err)
+          setSummaryError(err.message || String(err))
+        } finally {
+          setSummaryLoading(false)
+        }
+      })()
     }
-  }, [index, input, answers, navigate])
+  }, [index, input, answers, questionText])
 
   useEffect(() => {
     if (timeLeft <= 0) {
@@ -92,6 +180,24 @@ export default function Chat() {
   return (
     <Card style={{ minHeight: 300 }}>
       <Title level={3}>Chat / Interview</Title>
+      {completed && (
+        <div style={{ marginBottom: 12 }}>
+          {summaryLoading ? (
+            <div><Spin /> Generating summary...</div>
+          ) : summaryError ? (
+            <Alert type="error" message={`Summary failed: ${summaryError}`} />
+          ) : summary ? (
+            <div>
+              <Alert type="success" message="Interview complete — summary available in console and below." />
+              <pre style={{ background: '#fafafa', padding: 12, marginTop: 8 }}>{JSON.stringify(summary, null, 2)}</pre>
+            </div>
+          ) : (
+            <div>
+              <Alert type="info" message="Interview complete. Waiting for summary..." />
+            </div>
+          )}
+        </div>
+      )}
       <Paragraph>
         Question {index + 1} of {QUESTIONS.length} — <strong>{q.difficulty}</strong>
       </Paragraph>
