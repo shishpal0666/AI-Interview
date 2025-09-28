@@ -1,35 +1,51 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
+import { useEffect } from 'react'
+import { useNavigate, useLocation, Routes, Route } from 'react-router-dom'
+import { Tabs, Layout } from 'antd'
+import Interviewee from './pages/Interviewee'
+import Interviewer from './pages/Interviewer'
 import './App.css'
 
-function App() {
-  const [count, setCount] = useState(0)
+const { Content } = Layout
+
+export default function App() {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const pathToKey = (path) => {
+    if (path.startsWith('/interviewer')) return 'interviewer'
+    return 'interviewee'
+  }
+
+  useEffect(() => {
+    if (location.pathname === '/') navigate('/interviewee', { replace: true })
+
+  }, [])
+
+  const onTabChange = (key) => {
+    if (key === 'interviewer') navigate('/interviewer')
+    else navigate('/interviewee')
+  }
 
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.jsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
+    <Layout style={{ minHeight: '100vh' }}>
+      <Content style={{ padding: 24 }}>
+        <Tabs
+          activeKey={pathToKey(location.pathname)}
+          onChange={onTabChange}
+          items={[
+            { key: 'interviewee', label: 'Interviewee' },
+            { key: 'interviewer', label: 'Interviewer' },
+          ]}
+        />
+
+        <div style={{ marginTop: 16 }}>
+          <Routes>
+            <Route path="/interviewee" element={<Interviewee />} />
+            <Route path="/interviewer" element={<Interviewer />} />
+          </Routes>
+        </div>
+      </Content>
+    </Layout>
   )
 }
 
-export default App
