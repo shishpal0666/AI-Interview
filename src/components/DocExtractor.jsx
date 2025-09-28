@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { Card, Typography, Spin, Alert } from 'antd'
+import { Card, Typography, Spin, Alert, Input, Button, Space } from 'antd'
 import extractFields from '../utils/extractFields'
+import { useNavigate } from 'react-router-dom'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url'
 import mammoth from 'mammoth'
@@ -15,6 +16,9 @@ export default function DocExtractor() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [parsed, setParsed] = useState({ name: null, email: null, phone: null })
+  const navigate = useNavigate()
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState({ name: '', email: '', phone: '' })
 
   const handleFile = async (file) => {
     setError(null)
@@ -34,8 +38,10 @@ export default function DocExtractor() {
           const strings = content.items.map((item) => item.str || '').join(' ')
           fullText += strings + '\n\n'
         }
-  setText(fullText)
-  setParsed(extractFields(fullText))
+        const pf = extractFields(fullText)
+        setText(fullText)
+        setParsed(pf)
+        setDraft({ name: pf.name || '', email: pf.email || '', phone: pf.phone || '' })
       } else if (
         file.type ===
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
@@ -93,14 +99,77 @@ export default function DocExtractor() {
             {text}
           </pre>
         )}
-        {text && (
-          <div style={{ marginTop: 12 }}>
-            <strong>Parsed fields:</strong>
-            <div>Name: {parsed.name || '—'}</div>
-            <div>Email: {parsed.email || '—'}</div>
-            <div>Phone: {parsed.phone || '—'}</div>
-          </div>
-        )}
+          {text && (
+            <div style={{ marginTop: 12 }}>
+              <strong>Parsed fields:</strong>
+              <div>Name: {parsed.name || '—'}</div>
+              <div>Email: {parsed.email || '—'}</div>
+              <div>Phone: {parsed.phone || '—'}</div>
+
+              {(!parsed.name || !parsed.email || !parsed.phone) ? (
+                <div style={{ marginTop: 12 }}>
+                  <p>Please enter any missing fields before continuing:</p>
+                  <Space direction="vertical">
+              {editing && <Alert type="warning" message="Please fill the required fields before continuing" />}
+                    {!parsed.name && (
+                      <Input
+                        placeholder="Full name"
+                        value={draft.name}
+                        onChange={(e) => setDraft(d => ({ ...d, name: e.target.value }))}
+                      />
+                    )}
+                    {!parsed.email && (
+                      <Input
+                        placeholder="Email"
+                        value={draft.email}
+                        onChange={(e) => setDraft(d => ({ ...d, email: e.target.value }))}
+                      />
+                    )}
+                    {!parsed.phone && (
+                      <Input
+                        placeholder="Phone"
+                        value={draft.phone}
+                        onChange={(e) => setDraft(d => ({ ...d, phone: e.target.value }))}
+                      />
+                    )}
+                    <div>
+                      <Button
+                        type="primary"
+                        onClick={() => {
+                          const merged = { ...parsed, ...draft }
+                          if (!merged.email || !merged.phone) {
+                            setEditing(true)
+                            return
+                          }
+                          try {
+                            localStorage.setItem('candidateInfo', JSON.stringify(merged))
+                          } catch (_err) {
+                            console.warn('Failed to persist candidate info', _err)
+                          }
+                          navigate('/chat')
+                        }}
+                      >
+                        Continue to Chat
+                      </Button>
+                    </div>
+                  </Space>
+                </div>
+                ) : (
+                <div style={{ marginTop: 12 }}>
+                  <Button
+                    type="primary"
+                    onClick={() => {
+                      const merged = { ...parsed, ...draft }
+                      try { localStorage.setItem('candidateInfo', JSON.stringify(merged)) } catch (_err) { console.warn(_err) }
+                      navigate('/chat')
+                    }}
+                  >
+                    Start Chat
+                  </Button>
+                </div>
+              )}
+            </div>
+          )}
       </div>
     </Card>
   )

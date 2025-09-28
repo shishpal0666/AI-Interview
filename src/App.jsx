@@ -3,6 +3,7 @@ import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-
 import { Tabs, Layout } from 'antd'
 import Interviewee from './pages/Interviewee'
 import Interviewer from './pages/Interviewer'
+import Chat from './pages/Chat'
 import './App.css'
 
 const { Content } = Layout
@@ -18,8 +19,7 @@ export default function App() {
 
   useEffect(() => {
     if (location.pathname === '/') navigate('/interviewee', { replace: true })
-
-  }, [])
+  }, [location.pathname, navigate])
 
   const onTabChange = (key) => {
     if (key === 'interviewer') navigate('/interviewer')
@@ -43,6 +43,7 @@ export default function App() {
             <Route path="/" element={<Navigate to="/interviewee" replace />} />
             <Route path="/interviewee" element={<Interviewee />} />
             <Route path="/interviewer" element={<Interviewer />} />
+            <Route path="/chat" element={<Chat />} />
             <Route path="*" element={<Navigate to="/interviewee" replace />} />
           </Routes>
         </div>
