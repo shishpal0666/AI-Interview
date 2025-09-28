@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Card, Typography, Spin, Alert } from 'antd'
+import extractFields from '../utils/extractFields'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf'
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url'
 import mammoth from 'mammoth'
@@ -13,6 +14,7 @@ export default function DocExtractor() {
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [parsed, setParsed] = useState({ name: null, email: null, phone: null })
 
   const handleFile = async (file) => {
     setError(null)
@@ -32,14 +34,17 @@ export default function DocExtractor() {
           const strings = content.items.map((item) => item.str || '').join(' ')
           fullText += strings + '\n\n'
         }
-        setText(fullText)
+  setText(fullText)
+  setParsed(extractFields(fullText))
       } else if (
         file.type ===
           'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
         name.endsWith('.docx')
       ) {
-        const result = await mammoth.extractRawText({ arrayBuffer })
-        setText(result.value || '')
+  const result = await mammoth.extractRawText({ arrayBuffer })
+  const txt = result.value || ''
+  setText(txt)
+  setParsed(extractFields(txt))
       } else {
         throw new Error('Unsupported file type — please upload a PDF or DOCX')
       }
@@ -87,6 +92,14 @@ export default function DocExtractor() {
           >
             {text}
           </pre>
+        )}
+        {text && (
+          <div style={{ marginTop: 12 }}>
+            <strong>Parsed fields:</strong>
+            <div>Name: {parsed.name || '—'}</div>
+            <div>Email: {parsed.email || '—'}</div>
+            <div>Phone: {parsed.phone || '—'}</div>
+          </div>
         )}
       </div>
     </Card>
