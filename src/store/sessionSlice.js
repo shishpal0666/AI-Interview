@@ -69,10 +69,13 @@ const sessionSlice = createSlice({
       if (action.payload && action.payload.summary) {
         state.currentSession.summary = action.payload.summary
       }
-
       const cid = state.currentSession.candidateId
       let candidate = null
       if (cid) candidate = state.candidates.find((c) => c.id === cid)
+      // If not found by id, try to match by email (to avoid duplicate candidates)
+      if (!candidate && action.payload && action.payload.candidate && action.payload.candidate.email) {
+        candidate = state.candidates.find((c) => c.email === action.payload.candidate.email)
+      }
       if (!candidate && action.payload && action.payload.candidate) {
         const maybe = { ...(action.payload.candidate) }
         if (!maybe.id) maybe.id = cid || nanoid()
@@ -80,6 +83,10 @@ const sessionSlice = createSlice({
         maybe.sessions = maybe.sessions || []
         state.candidates.push(maybe)
         candidate = maybe
+      }
+      // Ensure that the current session's candidateId is the canonical candidate id
+      if (candidate && state.currentSession) {
+        state.currentSession.candidateId = candidate.id
       }
 
       const snapshot = { ...state.currentSession }
@@ -125,7 +132,11 @@ const sessionSlice = createSlice({
       state.sessions = state.sessions || []
       if (!state.sessions.find((s) => s.id === snap.id)) state.sessions.push(snap)
       if (snap.candidate && snap.candidate.id) {
+        // Try to find candidate by id first, then by email to avoid duplicates
         let cand = state.candidates.find((c) => c.id === snap.candidate.id)
+        if (!cand && snap.candidate.email) {
+          cand = state.candidates.find((c) => c.email === snap.candidate.email)
+        }
         if (!cand) {
           cand = { ...snap.candidate, createdAt: snap.candidate.createdAt || Date.now(), sessions: [] }
           state.candidates.push(cand)
@@ -142,10 +153,53 @@ const sessionSlice = createSlice({
     discardCurrentSession(state) {
       state.currentSession = null;
     },
+    restoreSession(state, action) {
+      const snap = action.payload;
+      if (!snap) return;
+      // Accept the snapshot as the current session shape but normalize it
+      const normalized = { ...(snap || {}) };
+      normalized.status = normalized.status || 'in-progress';
+      // Ensure candidateId exists (try candidate.id fallback)
+      if (!normalized.candidateId && normalized.candidate && normalized.candidate.id) normalized.candidateId = normalized.candidate.id;
+
+      // Normalize questions ensuring expected fields exist
+      if (Array.isArray(normalized.questions)) {
+        normalized.questions = normalized.questions.map((q, idx) => {
+          const qq = { ...(q || {}) };
+          if (!qq.id) qq.id = qq.id === 0 ? 0 : (idx + 1);
+          qq.text = qq.text || '';
+          qq.difficulty = qq.difficulty || 'Easy';
+          qq.timeLimit = typeof qq.timeLimit === 'number' ? qq.timeLimit : null;
+          // Keep remainingTime if present, else fall back to timeLimit
+          qq.remainingTime = typeof qq.remainingTime === 'number' ? qq.remainingTime : (typeof qq.timeLimit === 'number' ? qq.timeLimit : null);
+          // Ensure answer shape
+          if (!qq.answer) qq.answer = null;
+          return qq;
+        });
+      } else {
+        normalized.questions = [];
+      }
+
+      // Compute a sensible questionIndex: prefer provided, else first unanswered
+      let qIndex = typeof normalized.questionIndex === 'number' ? normalized.questionIndex : -1;
+      if (qIndex < 0) {
+        qIndex = 0;
+        for (let i = 0; i < normalized.questions.length; i += 1) {
+          const qq = normalized.questions[i];
+          if (!qq || !qq.answer || !qq.answer.submittedAt) {
+            qIndex = i;
+            break;
+          }
+        }
+      }
+      normalized.questionIndex = qIndex;
+
+      state.currentSession = normalized;
+    },
   },
 })
 
-export const { startSession, setSessionQuestions, startQuestion, updateQuestion, submitAnswer, completeSession, addCandidate, updateCurrentSession, importArchivedSession, discardCurrentSession } = sessionSlice.actions
+export const { startSession, setSessionQuestions, startQuestion, updateQuestion, submitAnswer, completeSession, addCandidate, updateCurrentSession, importArchivedSession, discardCurrentSession, restoreSession } = sessionSlice.actions
 
 export const selectCurrentSession = (state) => state.session && state.session.currentSession
 export const selectCandidates = (state) => state.session && state.session.candidates

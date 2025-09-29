@@ -3,8 +3,9 @@ import { nanoid } from '@reduxjs/toolkit';
 import { Card, Typography, Spin, Alert, Input, Button, Space } from 'antd';
 import extractFields from '../utils/extractFields';
 import { useNavigate } from 'react-router-dom';
-import { useDispatch } from 'react-redux';
+import { useDispatch, useSelector } from 'react-redux';
 import { addCandidate, startSession } from '../store/sessionSlice';
+import { broadcastMessage } from '../utils/broadcast';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
 import mammoth from 'mammoth';
@@ -19,6 +20,8 @@ export default function DocExtractor() {
   const [parsed, setParsed] = useState({ name: null, email: null, phone: null });
   const navigate = useNavigate();
   const dispatch = useDispatch();
+  const candidates = useSelector((s) => s.session && s.session.candidates) || [];
+  const current = useSelector((s) => s.session && s.session.currentSession);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ name: '', email: '', phone: '' });
 
@@ -103,14 +106,30 @@ export default function DocExtractor() {
                       const hasPhone = merged.phone && String(merged.phone).trim();
                       if (!hasEmail || !hasPhone) { setEditing(true); return; }
                       try {
-                        const cand = { ...merged };
-                        if (!cand.id) cand.id = nanoid();
-                        dispatch(addCandidate(cand));
-                        try { localStorage.setItem('candidateInfo', JSON.stringify(cand)); } catch (err) { console.warn('failed to persist candidateInfo', err); }
-                        dispatch(startSession(cand.id));
+                        // If a candidate with this email already exists, reuse that candidate id
+                        const existing = candidates.find((c) => c.email === merged.email);
+                        if (existing) {
+                          // If there's an active in-progress session for this candidate, block starting a new one
+                          if (current && current.candidateId === existing.id && current.status === 'in-progress') {
+                            setError('An interview is already in progress for this candidate. Please resume the existing session or discard it from Dashboard.');
+                            return;
+                          }
+                          const candToUse = { ...existing };
+                          try { localStorage.setItem('candidateInfo', JSON.stringify(candToUse)); } catch (err) { console.warn('failed to persist candidateInfo', err); }
+                          dispatch(startSession(candToUse.id));
+                          try { broadcastMessage('session:started', { id: candToUse.id, candidate: candToUse }) } catch (e) { void e }
+                        } else {
+                          const cand = { ...merged };
+                          if (!cand.id) cand.id = nanoid();
+                          dispatch(addCandidate(cand));
+                          try { localStorage.setItem('candidateInfo', JSON.stringify(cand)); } catch (err) { console.warn('failed to persist candidateInfo', err); }
+                          dispatch(startSession(cand.id));
+                          try { broadcastMessage('candidate:added', cand) } catch (e) { void e }
+                          try { broadcastMessage('session:started', { id: cand.id, candidate: cand }) } catch (e) { void e }
+                        }
                       } catch (e) {
                         console.warn('Redux dispatch failed, falling back to localStorage', e);
-                        try { localStorage.setItem('candidateInfo', JSON.stringify(merged)); } catch (_err) { console.warn('Failed to persist candidate info', _err); }
+                        try { localStorage.setItem('candidateInfo', JSON.stringify(merged)); } catch (_err) { console.warn(_err); }
                       }
                       navigate('/chat', { replace: true });
                     }}>Continue to Chat</Button>
@@ -120,18 +139,32 @@ export default function DocExtractor() {
             ) : (
               <div style={{ marginTop: 12 }}>
                 <Button type="primary" onClick={() => {
-                  const merged = { ...parsed, ...draft };
-                  try {
-                    const cand = { ...merged };
-                    if (!cand.id) cand.id = nanoid();
-                    dispatch(addCandidate(cand));
-                    try { localStorage.setItem('candidateInfo', JSON.stringify(cand)); } catch (err) { console.warn('failed to persist candidateInfo', err); }
-                    dispatch(startSession(cand.id));
-                  } catch (e) {
-                    console.warn('Redux add/start failed, falling back to localStorage', e);
-                    try { localStorage.setItem('candidateInfo', JSON.stringify(merged)); } catch (_err) { console.warn(_err); }
-                  }
-                  navigate('/chat', { replace: true });
+                    const merged = { ...parsed, ...draft };
+                    try {
+                      const existing = candidates.find((c) => c.email === merged.email);
+                      if (existing) {
+                        if (current && current.candidateId === existing.id && current.status === 'in-progress') {
+                          setError('An interview is already in progress for this candidate. Please resume the existing session or discard it from Dashboard.');
+                          return;
+                        }
+                        const candToUse = { ...existing };
+                        try { localStorage.setItem('candidateInfo', JSON.stringify(candToUse)); } catch (err) { console.warn('failed to persist candidateInfo', err); }
+                        dispatch(startSession(candToUse.id));
+                        try { broadcastMessage('session:started', { id: candToUse.id, candidate: candToUse }) } catch (e) { void e }
+                      } else {
+                        const cand = { ...merged };
+                        if (!cand.id) cand.id = nanoid();
+                        dispatch(addCandidate(cand));
+                        try { localStorage.setItem('candidateInfo', JSON.stringify(cand)); } catch (err) { console.warn('failed to persist candidateInfo', err); }
+                        dispatch(startSession(cand.id));
+                        try { broadcastMessage('candidate:added', cand) } catch (e) { void e }
+                        try { broadcastMessage('session:started', { id: cand.id, candidate: cand }) } catch (e) { void e }
+                      }
+                    } catch (e) {
+                      console.warn('Redux add/start failed, falling back to localStorage', e);
+                      try { localStorage.setItem('candidateInfo', JSON.stringify(merged)); } catch (_err) { console.warn(_err); }
+                    }
+                    navigate('/chat', { replace: true });
                 }}>Start Chat</Button>
               </div>
             )}
