@@ -71,7 +71,7 @@ export default function App() {
             <div className="hidden sm:block muted">AI-assisted interviewing</div>
           </div>
           <div className="flex items-center gap-2">
-            <a className="btn btn-ghost" href="https://github.com" target="_blank" rel="noreferrer"><GithubOutlined />&nbsp;Repo</a>
+            <a className="btn btn-ghost" href="https://github.com/shishpal0666/AI-Interview" target="_blank" rel="noreferrer"><GithubOutlined />&nbsp;Repo</a>
           </div>
         </div>
       </header>
