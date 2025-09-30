@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-dom';
-import { Tabs, Layout, Typography, Space, Button, Modal } from 'antd';
+import { Tabs, Layout, Typography, Space, Button, Modal, Spin } from 'antd';
 import { GithubOutlined } from '@ant-design/icons';
 import Interviewee from './pages/Interviewee';
 import Interviewer from './pages/Interviewer';
@@ -8,7 +8,7 @@ import Chat from './pages/Chat';
 import Feedback from './pages/Feedback';
 import './App.css';
 import { useDispatch } from 'react-redux';
-import { discardCurrentSession } from './store/sessionSlice';
+import { discardCurrentSession, restoreSession, resumeSession } from './store/sessionSlice';
 
 const { Header, Content, Footer } = Layout;
 const { Title } = Typography;
@@ -19,6 +19,7 @@ export default function App() {
   const location = useLocation();
   const [welcomeVisible, setWelcomeVisible] = useState(false);
   const [welcomeMessage, setWelcomeMessage] = useState('');
+  const [loading, setLoading] = useState(true);
 
   const pathToKey = (path) => {
     if (path.startsWith('/interviewer')) return 'interviewer';
@@ -35,16 +36,26 @@ export default function App() {
       if (snapRaw) {
         const snap = JSON.parse(snapRaw);
         if (snap && snap.status !== 'completed') {
+          try {
+            dispatch(restoreSession(snap));
+          } catch (e) { void e }
           setWelcomeMessage(`Welcome back — you have an unfinished session started ${snap.savedAt ? new Date(snap.savedAt).toLocaleString() : ''}`);
           setWelcomeVisible(true);
         }
       }
     } catch (e) { void e; }
-  }, []);
+    finally {
+      setLoading(false);
+    }
+  }, [dispatch]);
 
   const onTabChange = (key) => {
     if (key === 'interviewer') navigate('/interviewer')
     else navigate('/interviewee')
+  }
+
+  if (loading) {
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><Spin size="large" /></div>;
   }
 
   return (
@@ -89,10 +100,22 @@ export default function App() {
         title="Welcome back"
         open={welcomeVisible}
         onCancel={() => setWelcomeVisible(false)}
-        onOk={() => setWelcomeVisible(false)}
         footer={[
           <Button key="discard" onClick={() => { try { localStorage.removeItem('incompleteSession'); dispatch(discardCurrentSession()); setWelcomeVisible(false); } catch (e) { void e; } }}>Discard</Button>,
-          <Button key="resume" type="primary" onClick={() => { setWelcomeVisible(false); navigate('/chat'); }}>Resume</Button>
+          <Button key="resume" type="primary" onClick={() => {
+            try {
+              const raw = localStorage.getItem('incompleteSession');
+              if (raw) {
+                const snap = JSON.parse(raw);
+                if (snap) {
+                  dispatch(restoreSession(snap));
+                  dispatch(resumeSession());
+                  navigate('/chat');
+                }
+              }
+            } catch (e) { console.warn('restore dispatch failed', e) }
+            setWelcomeVisible(false);
+          }}>Resume</Button>
         ]}
       >
         <div>{welcomeMessage}</div>

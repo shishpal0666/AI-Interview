@@ -37,13 +37,10 @@ async function callGemini(prompt, options = {}) {
     let parsedBody = errText;
     try {
       parsedBody = JSON.parse(errText);
-    } catch {
-      /* keep raw text */
-    }
+  } catch { void 0 }
     const err = new Error(`Gemini request failed: ${resp.status} ${resp.statusText} - ${typeof parsedBody === 'string' ? parsedBody : JSON.stringify(parsedBody)}`);
     err.status = resp.status;
     err.responseBody = parsedBody;
-    // Mark network/server errors as retryable at the caller level
     err.isNetworkError = false;
     throw err;
   }
@@ -87,7 +84,7 @@ async function callGeminiInternal(prompt, options = {}) {
   const msg = (lastErr && lastErr.message) || String(lastErr) || "Gemini request failed";
   const error = new Error(msg);
   error.isGeminiError = true;
-  // Mark retryable when last error was a network error or a 5xx/429 HTTP response
+  
   const lastStatus = lastErr && lastErr.status;
   const lastIsNetwork = Boolean(lastErr && lastErr.isNetworkError);
   error.isRetryable = lastIsNetwork || (typeof lastStatus === "number" && (lastStatus >= 500 || lastStatus === 429));

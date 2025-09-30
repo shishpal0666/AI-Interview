@@ -25,6 +25,7 @@ import {
   updateCurrentSession,
 } from "../store/sessionSlice";
 import { updateQuestion } from "../store/sessionSlice";
+import { tickQuestion } from "../store/sessionSlice";
 import QuestionDisplay from "../components/Chat/QuestionDisplay";
 import TimerProgress from "../components/Chat/TimerProgress";
 import AnswerBox from "../components/Chat/AnswerBox";
@@ -73,6 +74,7 @@ export default function Chat() {
   const [index, setIndex] = useState(0);
   const [timeLeft, setTimeLeft] = useState(null);
   const [input, setInput] = useState("");
+  const hasEditedRef = useRef(false);
   const [questionText, setQuestionText] = useState("");
   const [qLoading, setQLoading] = useState(false);
   const [qError, setQError] = useState(null);
@@ -85,8 +87,10 @@ export default function Chat() {
   const timerRef = useRef(null);
   const isSubmittingRef = useRef(false);
   const isEvaluatingRef = useRef(false);
+  const isUnloadingRef = useRef(false);
   const questionsFetchedRef = useRef(false);
   const INCOMPLETE_KEY = "incompleteSession";
+  const sessionInitRef = useRef(null);
 
   function buildSnapshotFromState() {
     const state =
@@ -99,19 +103,15 @@ export default function Chat() {
   }
 
   useEffect(() => {
-    // If a session is restored into the store, make sure our local index
-    // follows the authoritative `currentSession.questionIndex`. Without
-    // this the UI can remain on question 0 while the store says a later
-    // question is active which leads to skipped/disabled inputs after
-    // resuming from an incomplete snapshot.
+  
     if (!currentSession) return;
+    const sid = currentSession.id || null;
+    if (sessionInitRef.current === sid) return;
+    sessionInitRef.current = sid;
+
     const target = typeof currentSession.questionIndex === 'number' ? currentSession.questionIndex : 0;
-    // Update the authoritative index immediately
     setIndex((prev) => (prev === target ? prev : target));
 
-    // Also synchronously reconcile local UI state with the restored session
-    // to avoid a render-order race where the UI shows the wrong question
-    // (commonly observed as starting from question 1 and disabling input).
     try {
       const qs = Array.isArray(currentSession.questions) ? currentSession.questions : [];
       const q = qs[target] || null;
@@ -122,16 +122,51 @@ export default function Chat() {
         const elapsed = Math.floor((Date.now() - q.startedAt) / 1000);
         rem = Math.max(0, rem - elapsed);
       }
-      const newInput = q && q.answer ? (q.answer.text || '') : '';
+      
+      let newInput = '';
+      try {
+        const sidKey = sessionInitRef.current || sid || (currentSession && currentSession.id) || null;
+        if (sidKey) {
+          const persisted = localStorage.getItem(`incompleteInput:${sidKey}:${target}`);
+          if (persisted != null) {
+            newInput = String(persisted || '');
+          }
+        }
+      } catch (e) { void e }
+      if (!newInput) newInput = q && q.answer ? (q.answer.text || '') : '';
       const newSubmitted = Boolean(q && q.answer && q.answer.submittedAt);
       setQuestionText((prev) => (prev === newQuestionText ? prev : newQuestionText));
       setTimeLeft((prev) => (prev === rem ? prev : rem));
-      setInput((prev) => (prev === newInput ? prev : newInput));
+      if (!hasEditedRef.current) {
+        setInput((prev) => (prev === newInput ? prev : newInput));
+      }
       setSubmittedThisQuestion((prev) => (prev === newSubmitted ? prev : newSubmitted));
     } catch (e) {
       void e;
     }
   }, [currentSession]);
+
+  
+  useEffect(() => {
+    let t = null;
+    try {
+      const sid = currentSession && currentSession.id ? currentSession.id : null;
+      if (!sid || typeof index !== 'number') return;
+      const key = `incompleteInput:${sid}:${index}`;
+      
+      t = setTimeout(() => {
+        try { localStorage.setItem(key, String(input || '')); } catch (e) { void e }
+      }, 250);
+    } catch (e) { void e }
+    return () => {
+      try { if (t) clearTimeout(t); } catch (e) { void e }
+    };
+  }, [input, index, currentSession]);
+
+  
+  useEffect(() => {
+    hasEditedRef.current = false;
+  }, [index]);
 
   useEffect(() => {
     const lsCandidate = localStorage.getItem("candidateInfo");
@@ -143,9 +178,7 @@ export default function Chat() {
   useEffect(() => {
     if (!currentSession) {
       try {
-        // If there's an incomplete snapshot in localStorage, do not auto-start
-        // a fresh session here — the resume flow should restore that snapshot
-        // instead. This avoids clobbering restored state with a new session.
+        
         const INCOMPLETE_KEY = "incompleteSession";
         const snapRaw = localStorage.getItem(INCOMPLETE_KEY);
         if (snapRaw) return;
@@ -160,11 +193,46 @@ export default function Chat() {
   }, [currentSession, dispatch, navigate]);
 
   useEffect(() => {
-    // persist current session snapshot when key pieces change
+    
     const save = () => {
       try {
         const snap = buildSnapshotFromState();
-        if (snap) localStorage.setItem(INCOMPLETE_KEY, JSON.stringify(snap));
+        if (!snap) return;
+            
+        try {
+          if (typeof index === 'number') snap.questionIndex = index;
+          if (Array.isArray(snap.questions) && snap.questions[index]) {
+            
+            let finalRem = null;
+            if (typeof timeLeft === 'number') {
+              finalRem = timeLeft;
+            } else {
+              try {
+                const qq = snap.questions[index];
+                const baseRem = typeof qq.remainingTime === 'number' ? qq.remainingTime : (typeof qq.timeLimit === 'number' ? qq.timeLimit : null);
+                if (qq && typeof qq.startedAt === 'number' && typeof baseRem === 'number') {
+                  const elapsed = Math.floor((Date.now() - qq.startedAt) / 1000);
+                  finalRem = Math.max(0, baseRem - elapsed);
+                } else {
+                  finalRem = baseRem;
+                }
+              } catch {
+                finalRem = typeof snap.questions[index].remainingTime === 'number' ? snap.questions[index].remainingTime : snap.questions[index].timeLimit;
+              }
+            }
+            snap.questions[index].remainingTime = finalRem;
+            
+            snap.questions[index].startedAt = null;
+            
+            try {
+              const existing = snap.questions[index].answer || null;
+              if (!existing || !existing.submittedAt) {
+                snap.questions[index].answer = { text: typeof input === 'string' ? input : (existing && existing.text) || '' };
+              }
+            } catch (e) { void e }
+          }
+        } catch (e) { void e }
+        localStorage.setItem(INCOMPLETE_KEY, JSON.stringify(snap));
       } catch (e) {
         void e;
       }
@@ -175,6 +243,7 @@ export default function Chat() {
       if (document.visibilityState === "hidden") save();
     };
     const onUnload = () => {
+      try { isUnloadingRef.current = true } catch(e) { void e }
       save();
     };
     document.addEventListener("visibilitychange", onVis);
@@ -184,12 +253,17 @@ export default function Chat() {
       document.removeEventListener("visibilitychange", onVis);
       window.removeEventListener("beforeunload", onUnload);
     };
-  }, [currentSession, index, timeLeft]);
+  }, [currentSession, index, timeLeft, input]);
 
   useEffect(() => {
     let mounted = true;
     const ensureQuestions = async () => {
       if (!currentSession) return;
+    
+      if (currentSession._restored) {
+        questionsFetchedRef.current = true;
+        return;
+      }
       if (questionsFetchedRef.current) return;
       if (currentSession.generatingQuestions) return;
       if (
@@ -305,53 +379,82 @@ export default function Chat() {
     if (!q) return;
     const newQuestionText = q.text || DEFAULT_QUESTIONS[index].text;
     const defaultTime = DIFFICULTY_SECONDS[q.difficulty] || 30;
-    let rem =
-      typeof q.remainingTime === "number"
-        ? q.remainingTime
-        : q.timeLimit || defaultTime;
+    let rem = typeof q.remainingTime === 'number' ? q.remainingTime : q.timeLimit || defaultTime;
     if (q.startedAt) {
       const elapsed = Math.floor((Date.now() - q.startedAt) / 1000);
       rem = Math.max(0, rem - elapsed);
     }
     const newInput = (q.answer && q.answer.text) || "";
     const newSubmitted = Boolean(q.answer && q.answer.submittedAt);
-    // Use functional updaters so we don't need to reference local state in the
-    // dependency array. This prevents the effect from clobbering the user's
-    // in-progress typing (which would occur if we read `input` directly here
-    // and reset it to the store value on each render).
+    
     setQuestionText((prev) => (prev === newQuestionText ? prev : newQuestionText));
-    setTimeLeft((prev) => (prev === rem ? prev : rem));
-    setInput((prev) => (prev === newInput ? prev : newInput));
+  
+  setTimeLeft((prev) => (prev === rem ? prev : rem));
+    
+    if (!hasEditedRef.current) {
+      setInput((prev) => (prev === newInput ? prev : newInput));
+    }
     setSubmittedThisQuestion((prev) => (prev === newSubmitted ? prev : newSubmitted));
-    // Only dispatch startQuestion if the question hasn't already been started.
+    
     try {
-      if (!q.startedAt) {
-        dispatch(startQuestion({ index, startedAt: Date.now(), remainingTime: rem }));
+  if (!q.startedAt && (currentSession && currentSession.status === 'in-progress')) {
+        
+        let savedRemaining = undefined;
+        try {
+          const raw = localStorage.getItem(INCOMPLETE_KEY);
+          if (raw) {
+            const snap = JSON.parse(raw);
+            if (snap && Array.isArray(snap.questions) && snap.questions[index] && typeof snap.questions[index].remainingTime === 'number') {
+              savedRemaining = snap.questions[index].remainingTime;
+            }
+          }
+        } catch (e) {
+          void e;
+        }
+        const useRemaining = typeof savedRemaining === 'number' ? savedRemaining : (typeof q.remainingTime === 'number' ? q.remainingTime : rem);
+        dispatch(startQuestion({ index, startedAt: Date.now(), remainingTime: useRemaining }));
       }
     } catch (e) {
       console.warn(e);
     }
-    // Intentionally only depend on the authoritative store and index. We do
-    // not include local state like `input` to avoid clobbering the user's
-    // in-progress edits.
+    
   }, [currentSession, index, dispatch]);
 
+  
   useEffect(() => {
-    if (qLoading) return;
-    if (typeof timeLeft !== "number") return;
+    if (qLoading || (currentSession && currentSession.status === 'paused')) {
+      clearInterval(timerRef.current);
+      return;
+    }
+    
     clearInterval(timerRef.current);
-    timerRef.current = setInterval(
-      () => setTimeLeft((t) => Math.max(0, t - 1)),
-      1000
-    );
+    
+    if (!currentSession || !Array.isArray(currentSession.questions)) return;
+    const q = currentSession.questions[index];
+    if (!q || typeof q.remainingTime !== 'number') return;
+    if (q.remainingTime <= 0) {
+      setTimeLeft(0);
+      return;
+    }
+
+    
+    setTimeLeft(q.remainingTime);
+
+    console.debug('[Chat] starting timer interval for index', index, 'remaining', q.remainingTime);
+    timerRef.current = setInterval(() => {
+      try {
+        dispatch(tickQuestion({ index }));
+      } catch (e) { void e }
+    }, 1000);
+
     return () => clearInterval(timerRef.current);
-  }, [index, qLoading, timeLeft]);
+  }, [index, qLoading, currentSession, dispatch]);
 
   const handleSubmit = useCallback(async () => {
     if (!currentSession || !Array.isArray(currentSession.questions)) return;
     const q = currentSession.questions[index];
     if (!q) return;
-    // Prevent re-entrancy: if already submitting, evaluating, or session is completed, bail out
+    
     if (isSubmittingRef.current || isEvaluatingRef.current || completed) return;
     isSubmittingRef.current = true;
     setSubmittedThisQuestion(true);
@@ -366,9 +469,15 @@ export default function Chat() {
         })
       );
       try {
+        const sid = currentSession && currentSession.id ? currentSession.id : null;
+        if (sid) {
+          try { localStorage.removeItem(`incompleteInput:${sid}:${index}`); } catch (e) { void e }
+        }
+      } catch (e) { void e }
+      try {
         const ss = store.getState().session || {};
         const cur = ss.currentSession || null;
-        const cand = (ss.candidates && cur && ss.candidates.find((c) => c.id === cur.candidateId)) || (localStorage.getItem('candidateInfo') ? JSON.parse(localStorage.getItem('candidateInfo')) : null);
+        const cand = (ss.candidates && cur && cur.candidates.find((c) => c.id === cur.candidateId)) || (localStorage.getItem('candidateInfo') ? JSON.parse(localStorage.getItem('candidateInfo')) : null);
         const payload = cur ? { ...cur, candidate: cand || null } : null;
         if (payload) broadcastMessage('session:updated', payload);
       } catch (e) { void e }
@@ -399,7 +508,7 @@ export default function Chat() {
         questions.length > 0 &&
         questions.every((qq) => qq && qq.answer && qq.answer.submittedAt);
       if (!allAnswered) {
-        // find next unanswered question after current index, fallback to first unanswered
+        
         let next = questions.findIndex(
           (qq, i) => (!qq.answer || !qq.answer.submittedAt) && i > index
         );
@@ -408,7 +517,7 @@ export default function Chat() {
             (qq) => !qq.answer || !qq.answer.submittedAt
           );
         if (next === -1) {
-          // fallback to sequential next if nothing else
+          
           next = Math.min(index + 1, Math.max(0, (questions.length || 1) - 1));
         }
         const nextQ = questions[next];
@@ -426,13 +535,13 @@ export default function Chat() {
         } catch (e) {
           console.warn(e);
         }
-        setIndex(next);
-        isSubmittingRef.current = false;
-        setSubmittedThisQuestion(false);
+  setIndex(next);
+  isSubmittingRef.current = false;
+  setSubmittedThisQuestion(false);
+  hasEditedRef.current = false;
       } else {
         console.log("handleSubmit: all questions answered, running evaluation");
-        // Double-check authoritative store flag to avoid a race where two callers
-        // start evaluation almost simultaneously (e.g., click + timer).
+        
         try {
           const latestCheck = store.getState().session && store.getState().session.currentSession;
           if (latestCheck && latestCheck.evaluating) {
@@ -443,7 +552,7 @@ export default function Chat() {
           void e;
         }
         try {
-          // mark evaluating in the store first (synchronous with Redux) to make it authoritative
+          
           dispatch(updateCurrentSession({ evaluating: true }));
         } catch (e) {
           void e;
@@ -472,8 +581,7 @@ export default function Chat() {
             evaluation = await evaluateAnswers(qs, answers);
           } catch (evalErr) {
             console.warn("Evaluation failed", evalErr);
-            // If the AI failed with a retryable/server error, surface a friendly message
-            // and abort completion so the candidate can retry later.
+            
             if (evalErr && evalErr.isGeminiError && evalErr.isRetryable) {
               const msg = evalErr.message || "AI is not responding right now. Please try again in a moment.";
               setSummaryError(msg);
@@ -490,14 +598,14 @@ export default function Chat() {
               }
               isSubmittingRef.current = false;
               setSummaryLoading(false);
-              // Do not complete the session; allow retry
+              
               return;
             }
             evaluation = { error: (evalErr && evalErr.message) || String(evalErr) };
           }
           setSummary(evaluation);
           try {
-            // persist per-question scores and feedback into the session questions
+            
             const latest = store.getState().session && store.getState().session.currentSession;
             const questionsArr = (latest && Array.isArray(latest.questions)) ? latest.questions : (currentSession.questions || []);
             const evals = (evaluation && Array.isArray(evaluation.evaluations)) ? evaluation.evaluations : [];
@@ -543,6 +651,7 @@ export default function Chat() {
           }
           try {
             localStorage.removeItem(INCOMPLETE_KEY);
+            hasEditedRef.current = false;
           } catch (e) {
             void e;
           }
@@ -601,17 +710,36 @@ export default function Chat() {
     }
   }, [currentSession, index, input, dispatch, navigate, completed]);
 
+  
+  const handleInputChange = useCallback((val) => {
+    try {
+      hasEditedRef.current = true;
+      setInput(val);
+      if (!currentSession || !Array.isArray(currentSession.questions)) return;
+      const q = currentSession.questions[index] || null;
+      const existing = (q && q.answer) || {};
+      
+      dispatch(updateQuestion({ index, patch: { answer: { ...existing, text: String(val || '') } } }));
+    } catch (e) {
+      console.warn('handleInputChange failed', e);
+    }
+  }, [currentSession, index, dispatch]);
+
   useEffect(() => {
+    const storeRem = (currentSession && Array.isArray(currentSession.questions) && currentSession.questions[index] && typeof currentSession.questions[index].remainingTime === 'number') ? currentSession.questions[index].remainingTime : null;
+    const effectiveRem = typeof storeRem === 'number' ? storeRem : timeLeft;
     if (
-      typeof timeLeft === "number" &&
-      timeLeft <= 0 &&
+      typeof effectiveRem === "number" &&
+      effectiveRem <= 0 &&
       currentSession &&
       Array.isArray(currentSession.questions)
     ) {
+      
+      if (isUnloadingRef.current) return;
       if (isSubmittingRef.current || isEvaluatingRef.current) return;
       handleSubmit();
     }
-  }, [timeLeft, handleSubmit, currentSession]);
+  }, [timeLeft, handleSubmit, currentSession, index]);
 
   const q =
     (currentSession &&
@@ -640,11 +768,24 @@ export default function Chat() {
                     type="success"
                     message="Interview complete — summary available below."
                   />
-                  <pre
-                    style={{ background: "#fafafa", padding: 12, marginTop: 8 }}
-                  >
-                    {JSON.stringify(summary, null, 2)}
-                  </pre>
+                  <div style={{ background: '#fafafa', padding: 12, marginTop: 8 }}>
+                    <div><strong>Total:</strong> {typeof summary.totalScore === 'number' ? `${summary.totalScore}/60` : (typeof summary.totalScore === 'string' ? summary.totalScore : '—')}</div>
+                    {Array.isArray(summary.evaluations) && summary.evaluations.length ? (
+                      <div style={{ marginTop: 8 }}>
+                        <strong>Per-question evaluations:</strong>
+                        <ol>
+                          {summary.evaluations.map((ev, i) => (
+                            <li key={i} style={{ marginBottom: 6 }}>
+                              <div><strong>Q{i + 1}:</strong> {typeof ev.score === 'number' ? `${ev.score}/10` : (ev.score == null ? '—' : String(ev.score))}</div>
+                              <div style={{ fontSize: 13, color: '#333' }}>{ev.feedback || 'No feedback'}</div>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+                    ) : (
+                      <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(summary, null, 2)}</pre>
+                    )}
+                  </div>
                 </div>
               ) : (
                 <div>
@@ -690,7 +831,7 @@ export default function Chat() {
             />
             <AnswerBox
               input={input}
-              setInput={setInput}
+              setInput={handleInputChange}
               submittedThisQuestion={submittedThisQuestion}
             />
           </div>

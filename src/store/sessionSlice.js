@@ -38,8 +38,21 @@ const sessionSlice = createSlice({
       if (!state.currentSession || !Array.isArray(state.currentSession.questions)) return
       const q = state.currentSession.questions[index]
       if (!q) return
+      try { console.debug('[sessionSlice] startQuestion', { index, startedAt, remainingTime, status: state.currentSession && state.currentSession.status }); } catch(e) { void e }
       q.startedAt = startedAt || Date.now()
       q.remainingTime = typeof remainingTime === 'number' ? remainingTime : (q.timeLimit || q.remainingTime || null)
+    },
+
+  tickQuestion(state, action) {
+      const idx = action.payload && typeof action.payload.index === 'number' ? action.payload.index : (state.currentSession && state.currentSession.questionIndex) || 0;
+      if (!state.currentSession || state.currentSession.status !== 'in-progress' || !Array.isArray(state.currentSession.questions)) {
+        try { console.debug('[sessionSlice] tickQuestion ignored - no in-progress session or questions', { status: state.currentSession && state.currentSession.status }); } catch(e) { void e }
+        return;
+      }
+      const q = state.currentSession.questions[idx];
+      if (!q || typeof q.remainingTime !== 'number') return;
+      try { console.debug('[sessionSlice] tickQuestion decrementing', { idx, before: q.remainingTime }); } catch(e) { void e }
+      q.remainingTime = Math.max(0, q.remainingTime - 1);
     },
 
     updateQuestion(state, action) {
@@ -156,13 +169,12 @@ const sessionSlice = createSlice({
     restoreSession(state, action) {
       const snap = action.payload;
       if (!snap) return;
-      // Accept the snapshot as the current session shape but normalize it
       const normalized = { ...(snap || {}) };
-      normalized.status = normalized.status || 'in-progress';
-      // Ensure candidateId exists (try candidate.id fallback)
+      
+  normalized.status = 'paused';
+
       if (!normalized.candidateId && normalized.candidate && normalized.candidate.id) normalized.candidateId = normalized.candidate.id;
 
-      // Normalize questions ensuring expected fields exist
       if (Array.isArray(normalized.questions)) {
         normalized.questions = normalized.questions.map((q, idx) => {
           const qq = { ...(q || {}) };
@@ -170,9 +182,8 @@ const sessionSlice = createSlice({
           qq.text = qq.text || '';
           qq.difficulty = qq.difficulty || 'Easy';
           qq.timeLimit = typeof qq.timeLimit === 'number' ? qq.timeLimit : null;
-          // Keep remainingTime if present, else fall back to timeLimit
           qq.remainingTime = typeof qq.remainingTime === 'number' ? qq.remainingTime : (typeof qq.timeLimit === 'number' ? qq.timeLimit : null);
-          // Ensure answer shape
+          qq.startedAt = null;
           if (!qq.answer) qq.answer = null;
           return qq;
         });
@@ -180,7 +191,6 @@ const sessionSlice = createSlice({
         normalized.questions = [];
       }
 
-      // Compute a sensible questionIndex: prefer provided, else first unanswered
       let qIndex = typeof normalized.questionIndex === 'number' ? normalized.questionIndex : -1;
       if (qIndex < 0) {
         qIndex = 0;
@@ -193,13 +203,20 @@ const sessionSlice = createSlice({
         }
       }
       normalized.questionIndex = qIndex;
-
+      normalized._restored = true;
+      try { console.debug('[sessionSlice] restoreSession applied', { id: normalized.id, questionIndex: normalized.questionIndex, status: normalized.status }); } catch (e) { void e }
       state.currentSession = normalized;
+    },
+    resumeSession(state) {
+      if (state.currentSession && state.currentSession.status === 'paused') {
+        state.currentSession.status = 'in-progress';
+  if (state.currentSession._restored) state.currentSession._restored = false;
+      }
     },
   },
 })
 
-export const { startSession, setSessionQuestions, startQuestion, updateQuestion, submitAnswer, completeSession, addCandidate, updateCurrentSession, importArchivedSession, discardCurrentSession, restoreSession } = sessionSlice.actions
+export const { startSession, setSessionQuestions, startQuestion, updateQuestion, submitAnswer, completeSession, addCandidate, updateCurrentSession, importArchivedSession, discardCurrentSession, restoreSession, tickQuestion, resumeSession } = sessionSlice.actions
 
 export const selectCurrentSession = (state) => state.session && state.session.currentSession
 export const selectCandidates = (state) => state.session && state.session.candidates

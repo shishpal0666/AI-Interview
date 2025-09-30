@@ -8,27 +8,12 @@ import { restoreSession, discardCurrentSession } from '../store/sessionSlice'
 
 function getOverallScoreFromSession(s) {
   if (!s) return null;
-  if (s.summary && typeof s.summary.overallScore !== 'undefined') return s.summary.overallScore;
   if (s.summary && typeof s.summary.totalScore === 'number') return s.summary.totalScore;
-
-  let per = [];
-  if (Array.isArray(s.questions) && s.questions.length) {
-    per = s.questions.map((q) => (q && q.answer && typeof q.answer.score === 'number' ? q.answer.score : null)).filter((x) => x !== null);
-  } else if (s.answers && typeof s.answers === 'object') {
-    per = Object.values(s.answers).map((a) => (a && typeof a.score === 'number' ? a.score : null)).filter((x) => x !== null);
-  }
-
-  // If there are no numeric scores, try to pick the most recent answered question's score
-  if (!per.length && Array.isArray(s.questions) && s.questions.length) {
-    for (let i = s.questions.length - 1; i >= 0; i -= 1) {
-      const q = s.questions[i];
-      if (q && q.answer && typeof q.answer.score === 'number') return q.answer.score;
-    }
-  }
-
-  if (!per.length) return null;
-  const avg = Math.round(per.reduce((a, b) => a + b, 0) / per.length);
-  return avg;
+  
+  const per = Array.isArray(s.questions) ? s.questions.map((q) => (q && q.answer && typeof q.answer.score === 'number' ? q.answer.score : null)).filter((x) => x !== null) : [];
+  if (per.length === 0) return null;
+  const total = per.reduce((a, b) => a + b, 0);
+  return total;
 }
 
 export default function Dashboard() {
@@ -148,7 +133,12 @@ export default function Dashboard() {
   const cols = [
     { title: 'Name', dataIndex: 'name', key: 'name' },
     { title: 'Email', dataIndex: 'email', key: 'email' },
-    { title: 'Score', dataIndex: 'score', key: 'score', sorter: (a, b) => (a.score || 0) - (b.score || 0), render: (s) => s == null ? <Text type="secondary">N/A</Text> : <Tag color={s >= 80 ? 'green' : s >= 50 ? 'orange' : 'red'}>{s}</Tag> },
+    { title: 'Score', dataIndex: 'score', key: 'score', sorter: (a, b) => (a.score || 0) - (b.score || 0), render: (s) => {
+      if (s == null) return <Text type="secondary">N/A</Text>;
+      const pct = (typeof s === 'number') ? Math.round((s / 60) * 100) : 0;
+      const color = pct >= 80 ? 'green' : pct >= 50 ? 'orange' : 'red';
+      return <Tag color={color}>{`${s}/60`}</Tag>;
+    } },
     { title: 'Phone', dataIndex: 'phone', key: 'phone', render: (p) => p || <Text type="secondary">—</Text> },
     { title: 'Created', dataIndex: 'createdAt', key: 'createdAt', sorter: (a, b) => (new Date(a.createdAt || 0)) - (new Date(b.createdAt || 0)), render: (d) => d ? new Date(d).toLocaleString() : <Text type="secondary">—</Text> },
   { title: 'Action', key: 'action', render: (__, record) => <a onClick={() => setSelected(record.id)}>View</a> },
@@ -209,7 +199,7 @@ export default function Dashboard() {
               <div>
                 <Paragraph><strong>Email:</strong> {sel.email}</Paragraph>
                 <Paragraph><strong>Phone:</strong> {sel.phone || '—'}</Paragraph>
-                <Paragraph><strong>Latest Score:</strong> {sel.score == null ? 'N/A' : sel.score}</Paragraph>
+                <Paragraph><strong>Latest Score:</strong> {sel.score == null ? 'N/A' : `${sel.score}/60`}</Paragraph>
 
                 <Title level={5}>Sessions</Title>
                 {sel.allSessions && sel.allSessions.length ? (
@@ -244,7 +234,7 @@ export default function Dashboard() {
 
                         {sess.summary && (
                           <div style={{ marginBottom: 12 }}>
-                            <Paragraph><strong>Overall Score:</strong> {getOverallScoreFromSession(sess) == null ? '—' : getOverallScoreFromSession(sess)}</Paragraph>
+                            <Paragraph><strong>Overall Score:</strong> {getOverallScoreFromSession(sess) == null ? '—' : `${getOverallScoreFromSession(sess)}/60`}</Paragraph>
                             <Paragraph><strong>Summary:</strong> {sess.summary.overallSummary || sess.summary.summary || sess.summary.error || '—'}</Paragraph>
                           </div>
                         )}
@@ -257,7 +247,7 @@ export default function Dashboard() {
                                 <div key={qi} style={{ marginBottom: 12, padding: 8, background: '#fafafa' }}>
                                   <Paragraph><strong>Q {q.id || qi+1}:</strong> {q.text}</Paragraph>
                                   <Paragraph><strong>Answer:</strong> {ans.text || '—'}</Paragraph>
-                                  <Paragraph><strong>Score:</strong> {typeof ans.score === 'number' ? ans.score : '—'} <br/> <strong>Feedback:</strong> {ans.feedback || '—'}</Paragraph>
+                                  <Paragraph><strong>Score:</strong> {typeof ans.score === 'number' ? `${ans.score}/10` : '—'} <br/> <strong>Feedback:</strong> {ans.feedback || '—'}</Paragraph>
                                 </div>
                               )
                             })
@@ -268,7 +258,7 @@ export default function Dashboard() {
                                 <div key={k} style={{ marginBottom: 12, padding: 8, background: '#fafafa' }}>
                                   <Paragraph><strong>Q {k}:</strong> {it.questionText}</Paragraph>
                                   <Paragraph><strong>Answer:</strong> {it.text}</Paragraph>
-                                  <Paragraph><strong>Score:</strong> {it.score == null ? '—' : it.score} <br/> <strong>Feedback:</strong> {it.feedback || '—'}</Paragraph>
+                                  <Paragraph><strong>Score:</strong> {it.score == null ? '—' : `${it.score}/10`} <br/> <strong>Feedback:</strong> {it.feedback || '—'}</Paragraph>
                                 </div>
                               )
                             })

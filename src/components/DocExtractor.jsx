@@ -106,10 +106,9 @@ export default function DocExtractor() {
                       const hasPhone = merged.phone && String(merged.phone).trim();
                       if (!hasEmail || !hasPhone) { setEditing(true); return; }
                       try {
-                        // If a candidate with this email already exists, reuse that candidate id
+                        
                         const existing = candidates.find((c) => c.email === merged.email);
                         if (existing) {
-                          // If there's an active in-progress session for this candidate, block starting a new one
                           if (current && current.candidateId === existing.id && current.status === 'in-progress') {
                             setError('An interview is already in progress for this candidate. Please resume the existing session or discard it from Dashboard.');
                             return;
