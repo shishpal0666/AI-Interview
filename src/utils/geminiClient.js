@@ -146,7 +146,6 @@ export async function generateQuestions(difficulties = ["Easy", "Easy", "Medium"
   const all = [...easyArr, ...mediumArr, ...hardArr];
   if (all.length !== diffs.length) console.warn("API did not return exactly expected number of questions. Received:", all.length);
   const generated = all.map((text, idx) => ({ id: idx + 1, text: String(text || "").trim(), difficulty: diffs[idx] || (idx < 2 ? "Easy" : idx < 4 ? "Medium" : "Hard") }));
-  console.log("generateQuestions :", generated);
   return generated;
 }
 
@@ -177,7 +176,6 @@ export async function evaluateAnswers(questions = [], answers = [], options = {}
       e.isGeminiError = true;
       throw e;
     }
-    console.log("evaluateAnswers:", parsed);
     return parsed;
   } catch (err) {
     console.warn("evaluateAnswers failed", err);
@@ -205,7 +203,6 @@ export async function fetchQuestion(difficulty = "Easy", options = {}) {
     if (!raw) return "";
     const parsed = parseJsonFromText(raw);
     if (parsed && typeof parsed === "object") {
-      console.log("fetchQuestion parsed:", parsed);
       return String(parsed.question || JSON.stringify(parsed));
     }
     return String(raw).trim();

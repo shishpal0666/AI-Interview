@@ -147,11 +147,15 @@ export default function Dashboard() {
   return (
     <div>
     <Space direction="vertical" style={{ width: '100%' }}>
-        <Title level={4}>Candidates</Title>
-        <Input.Search placeholder="Search by name or email" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 400 }} allowClear />
-        <Table columns={cols} dataSource={filtered} onRow={(record) => ({
-          onClick: () => setSelected(record.id),
-        })} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <Title level={4} style={{ margin: 0 }}>Candidates</Title>
+          <Input.Search placeholder="Search by name or email" value={q} onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 420, minWidth: 180 }} allowClear />
+        </div>
+        <div className="table-responsive">
+          <Table columns={cols} dataSource={filtered} onRow={(record) => ({
+            onClick: () => setSelected(record.id),
+          })} pagination={{ pageSize: 10 }} />
+        </div>
 
         <Modal
           title="Welcome back"
@@ -204,13 +208,13 @@ export default function Dashboard() {
                 <Title level={5}>Sessions</Title>
                 {sel.allSessions && sel.allSessions.length ? (
                   <div style={{ marginBottom: 12 }}>
-                    <Space style={{ marginBottom: 8 }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
                       {sel.allSessions.map((s, i) => (
                         <Tag key={i} color={i === selectedSessionIndex ? 'blue' : 'default'} onClick={() => setSelectedSessionIndex(i)} style={{ cursor: 'pointer' }}>
                           {s.completedAt ? new Date(s.completedAt).toLocaleString() : (s.startedAt ? new Date(s.startedAt).toLocaleString() : 'Session')}
                         </Tag>
                       ))}
-                    </Space>
+                    </div>
                   </div>
                 ) : (
                   <Paragraph type="secondary">No archived sessions for this candidate.</Paragraph>

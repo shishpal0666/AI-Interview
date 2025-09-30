@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation, Routes, Route, Navigate } from 'react-router-dom';
-import { Tabs, Layout, Typography, Space, Button, Modal, Spin } from 'antd';
+import { Tabs, Modal, Spin } from 'antd';
 import { GithubOutlined } from '@ant-design/icons';
 import Interviewee from './pages/Interviewee';
 import Interviewer from './pages/Interviewer';
 import Chat from './pages/Chat';
 import Feedback from './pages/Feedback';
-import './App.css';
+import './index.css';
 import { useDispatch } from 'react-redux';
 import { discardCurrentSession, restoreSession, resumeSession } from './store/sessionSlice';
+import ToastContainer from './components/ToastContainer';
 
-const { Header, Content, Footer } = Layout;
-const { Title } = Typography;
+// layout and title come from Tailwind/daisyUI now
 
 export default function App() {
   const dispatch = useDispatch();
@@ -29,6 +29,11 @@ export default function App() {
   useEffect(() => {
     if (location.pathname === '/') navigate('/interviewee', { replace: true });
   }, [location.pathname, navigate]);
+
+  const onTabChange = (key) => {
+    if (key === 'interviewer') navigate('/interviewer');
+    else navigate('/interviewee');
+  }
 
   useEffect(() => {
     try {
@@ -49,60 +54,66 @@ export default function App() {
     }
   }, [dispatch]);
 
-  const onTabChange = (key) => {
-    if (key === 'interviewer') navigate('/interviewer')
-    else navigate('/interviewee')
-  }
-
   if (loading) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}><Spin size="large" /></div>;
+    return (
+      <div className="w-full h-screen flex items-center justify-center">
+        <Spin size="large" />
+      </div>
+    );
   }
 
   return (
-    <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ background: '#fff', padding: '0 24px', borderBottom: '1px solid #f0f0f0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <Space align="center">
-            <Title level={4} style={{ margin: 0 }}>Swipe Interview Assistant</Title>
-          </Space>
-          <Space>
-            <Button icon={<GithubOutlined />} type="link" href="https://github.com" target="_blank">Repo</Button>
-          </Space>
-        </div>
-      </Header>
-
-      <Content style={{ padding: '24px', maxWidth: 1200, margin: '0 auto', width: '100%' }}>
-        <div style={{ background: '#fff', padding: 20, borderRadius: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.04)' }}>
-          <Tabs
-            activeKey={pathToKey(location.pathname)}
-            onChange={onTabChange}
-            items={[
-              { key: 'interviewee', label: 'Interviewee' },
-              { key: 'interviewer', label: 'Interviewer' },
-            ]}
-          />
-
-          <div style={{ marginTop: 16 }}>
-            <Routes>
-              <Route path="/" element={<Navigate to="/interviewee" replace />} />
-              <Route path="/interviewee" element={<Interviewee />} />
-              <Route path="/interviewer" element={<Interviewer />} />
-              <Route path="/chat" element={<Chat />} />
-              <Route path="/feedback" element={<Feedback />} />
-              <Route path="*" element={<Navigate to="/interviewee" replace />} />
-            </Routes>
+    <div className="app-container">
+      <header className="w-full border-b">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="text-2xl font-semibold">Swipe Interview Assistant</div>
+            <div className="hidden sm:block muted">AI-assisted interviewing</div>
+          </div>
+          <div className="flex items-center gap-2">
+            <a className="btn btn-ghost" href="https://github.com" target="_blank" rel="noreferrer"><GithubOutlined />&nbsp;Repo</a>
           </div>
         </div>
-      </Content>
+      </header>
 
-      <Footer style={{ textAlign: 'center' }}>Swipe Interview Assistant ©{new Date().getFullYear()}</Footer>
+      <main className="flex-1">
+        <div className="max-w-6xl mx-auto px-6 py-8">
+          <div className="card-surface">
+            <Tabs
+              activeKey={pathToKey(location.pathname)}
+              onChange={onTabChange}
+              items={[
+                { key: 'interviewee', label: 'Interviewee' },
+                { key: 'interviewer', label: 'Interviewer' },
+              ]}
+            />
+
+            <div className="mt-4">
+              <Routes>
+                <Route path="/" element={<Navigate to="/interviewee" replace />} />
+                <Route path="/interviewee" element={<Interviewee />} />
+                <Route path="/interviewer" element={<Interviewer />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/feedback" element={<Feedback />} />
+                <Route path="*" element={<Navigate to="/interviewee" replace />} />
+              </Routes>
+            </div>
+          </div>
+        </div>
+      </main>
+
+      <footer className="w-full border-t">
+        <div className="max-w-6xl mx-auto px-6 py-4 text-center muted">Swipe Interview Assistant ©{new Date().getFullYear()}</div>
+      </footer>
+      <ToastContainer />
+
       <Modal
         title="Welcome back"
         open={welcomeVisible}
         onCancel={() => setWelcomeVisible(false)}
         footer={[
-          <Button key="discard" onClick={() => { try { localStorage.removeItem('incompleteSession'); dispatch(discardCurrentSession()); setWelcomeVisible(false); } catch (e) { void e; } }}>Discard</Button>,
-          <Button key="resume" type="primary" onClick={() => {
+          <button key="discard" className="btn" onClick={() => { try { localStorage.removeItem('incompleteSession'); dispatch(discardCurrentSession()); setWelcomeVisible(false); } catch (e) { void e; } }}>Discard</button>,
+          <button key="resume" className="btn btn-primary" onClick={() => {
             try {
               const raw = localStorage.getItem('incompleteSession');
               if (raw) {
@@ -115,12 +126,12 @@ export default function App() {
               }
             } catch (e) { console.warn('restore dispatch failed', e) }
             setWelcomeVisible(false);
-          }}>Resume</Button>
+          }}>Resume</button>
         ]}
       >
         <div>{welcomeMessage}</div>
       </Modal>
-    </Layout>
+    </div>
   )
 }
 

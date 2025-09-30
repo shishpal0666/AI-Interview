@@ -1,11 +1,10 @@
 import React from 'react'
-import { Button, Space } from 'antd'
 
 export default function Controls({ onSkip, onSubmit, submittedThisQuestion }) {
   return (
-    <Space>
-      <Button onClick={onSkip} danger disabled={submittedThisQuestion}>Skip / Auto-submit</Button>
-      <Button type="primary" onClick={onSubmit} disabled={submittedThisQuestion}>{submittedThisQuestion ? 'Submitted' : 'Submit Answer'}</Button>
-    </Space>
+    <div className="flex items-center gap-2">
+      <button onClick={onSkip} className="btn btn-error" disabled={submittedThisQuestion}>Skip</button>
+      <button onClick={onSubmit} className="btn btn-primary" disabled={submittedThisQuestion}>{submittedThisQuestion ? 'Submitted' : 'Submit'}</button>
+    </div>
   )
 }

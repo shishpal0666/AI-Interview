@@ -1,37 +1,22 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import {
-  Card,
-  Typography,
-  Button,
-  Progress,
-  Input,
-  Spin,
-  Alert,
-  Space,
-} from "antd";
+import { Spin, Alert } from "antd";
 import { useNavigate } from "react-router-dom";
-import {
-  fetchQuestion,
-  generateQuestions,
-  evaluateAnswers,
-} from "../utils/geminiClient";
+import { generateQuestions, evaluateAnswers } from "../utils/geminiClient";
 import { store } from "../store";
 import { broadcastMessage } from "../utils/broadcast";
 import { useSelector, useDispatch } from "react-redux";
+import { showToast } from "../utils/toast";
 import {
   startSession,
   startQuestion,
   submitAnswer,
+  restoreSession,
+  resumeSession,
+  updateQuestion,
+  tickQuestion,
   updateCurrentSession,
 } from "../store/sessionSlice";
-import { updateQuestion } from "../store/sessionSlice";
-import { tickQuestion } from "../store/sessionSlice";
-import QuestionDisplay from "../components/Chat/QuestionDisplay";
 import TimerProgress from "../components/Chat/TimerProgress";
-import AnswerBox from "../components/Chat/AnswerBox";
-import Controls from "../components/Chat/Controls";
-
-const { Title, Paragraph } = Typography;
 
 const DEFAULT_QUESTIONS = [
   { id: 1, text: "Introduce yourself briefly.", difficulty: "Easy" },
@@ -85,12 +70,15 @@ export default function Chat() {
   const [summaryError, setSummaryError] = useState(null);
   const [submittedThisQuestion, setSubmittedThisQuestion] = useState(false);
   const timerRef = useRef(null);
+  const messagesRef = useRef(null);
   const isSubmittingRef = useRef(false);
   const isEvaluatingRef = useRef(false);
   const isUnloadingRef = useRef(false);
   const questionsFetchedRef = useRef(false);
   const INCOMPLETE_KEY = "incompleteSession";
   const sessionInitRef = useRef(null);
+
+  const questionsArray = currentSession && Array.isArray(currentSession.questions) ? currentSession.questions : DEFAULT_QUESTIONS;
 
   function buildSnapshotFromState() {
     const state =
@@ -103,7 +91,6 @@ export default function Chat() {
   }
 
   useEffect(() => {
-  
     if (!currentSession) return;
     const sid = currentSession.id || null;
     if (sessionInitRef.current === sid) return;
@@ -153,7 +140,7 @@ export default function Chat() {
       const sid = currentSession && currentSession.id ? currentSession.id : null;
       if (!sid || typeof index !== 'number') return;
       const key = `incompleteInput:${sid}:${index}`;
-      
+
       t = setTimeout(() => {
         try { localStorage.setItem(key, String(input || '')); } catch (e) { void e }
       }, 250);
@@ -174,6 +161,16 @@ export default function Chat() {
     if (!currentSession && !hasCandidates && !lsCandidate)
       navigate("/interviewee");
   }, [navigate, currentSession, candidates]);
+  const [incompleteSnap, setIncompleteSnap] = useState(null);
+  useEffect(() => {
+    try {
+      if (currentSession) { setIncompleteSnap(null); return; }
+      const raw = localStorage.getItem('incompleteSession');
+      if (!raw) return;
+      const snap = JSON.parse(raw);
+      if (snap && snap.id) setIncompleteSnap(snap);
+    } catch (e) { void e }
+  }, [currentSession]);
 
   useEffect(() => {
     if (!currentSession) {
@@ -271,7 +268,7 @@ export default function Chat() {
         currentSession.questions.length >= 6
       )
         return;
-      console.log("ensureQuestions start currentSession:", currentSession);
+      
       setQLoading(true);
       try {
         questionsFetchedRef.current = true;
@@ -335,14 +332,7 @@ export default function Chat() {
         } catch (e) {
           console.warn("dispatch startQuestion failed", e);
         }
-        try {
-          console.log(
-            "questions persisted to store:",
-            store.getState().session && store.getState().session.currentSession
-          );
-        } catch (e) {
-          console.warn(e);
-        }
+        
       } catch {
         const msg =
           "Could not generate interview questions. Redirecting to main page.";
@@ -440,7 +430,7 @@ export default function Chat() {
     
     setTimeLeft(q.remainingTime);
 
-    console.debug('[Chat] starting timer interval for index', index, 'remaining', q.remainingTime);
+    
     timerRef.current = setInterval(() => {
       try {
         dispatch(tickQuestion({ index }));
@@ -449,6 +439,15 @@ export default function Chat() {
 
     return () => clearInterval(timerRef.current);
   }, [index, qLoading, currentSession, dispatch]);
+
+  useEffect(() => {
+    try {
+      const el = messagesRef.current;
+      if (el) {
+        el.scrollTop = el.scrollHeight;
+      }
+    } catch (e) { void e }
+  }, [index, questionsArray]);
 
   const handleSubmit = useCallback(async () => {
     if (!currentSession || !Array.isArray(currentSession.questions)) return;
@@ -463,11 +462,12 @@ export default function Chat() {
       dispatch(
         submitAnswer({
           questionIndex: index,
-          text: input,
+            text: typeof input === 'string' ? input : String(input || ''),
           score: null,
           feedback: null,
         })
       );
+  try { setInput(''); } catch (e) { void e }
       try {
         const sid = currentSession && currentSession.id ? currentSession.id : null;
         if (sid) {
@@ -483,6 +483,7 @@ export default function Chat() {
       } catch (e) { void e }
     } catch (e) {
       console.warn("submitAnswer dispatch failed", e);
+  try { showToast('error', 'Failed to submit answer. Please try again.') } catch (e) { void e }
     }
     try {
       const latest =
@@ -491,19 +492,7 @@ export default function Chat() {
         latest && Array.isArray(latest.questions)
           ? latest.questions
           : currentSession.questions || [];
-      console.log(
-        "handleSubmit: questions count",
-        questions.length,
-        "current index",
-        index
-      );
-      console.log(
-        "handleSubmit: answers state",
-        questions.map((qq, i) => ({
-          i,
-          answered: Boolean(qq && qq.answer && qq.answer.submittedAt),
-        }))
-      );
+      
       const allAnswered =
         questions.length > 0 &&
         questions.every((qq) => qq && qq.answer && qq.answer.submittedAt);
@@ -540,12 +529,12 @@ export default function Chat() {
   setSubmittedThisQuestion(false);
   hasEditedRef.current = false;
       } else {
-        console.log("handleSubmit: all questions answered, running evaluation");
+        
         
         try {
           const latestCheck = store.getState().session && store.getState().session.currentSession;
           if (latestCheck && latestCheck.evaluating) {
-            console.log("handleSubmit: authoritative store says evaluation in progress, skipping");
+            
             return;
           }
         } catch (e) {
@@ -585,6 +574,7 @@ export default function Chat() {
             if (evalErr && evalErr.isGeminiError && evalErr.isRetryable) {
               const msg = evalErr.message || "AI is not responding right now. Please try again in a moment.";
               setSummaryError(msg);
+              try { showToast('error', msg) } catch (e) { void e }
               setSummary(null);
               try {
                 dispatch(updateCurrentSession({ evaluating: false }));
@@ -660,6 +650,7 @@ export default function Chat() {
           const msg =
             (err && err.message) || String(err) || "Summary generation failed";
           setSummaryError(msg);
+            try { showToast('error', msg) } catch (e) { void e }
           try {
             const candRaw = localStorage.getItem("candidateInfo");
             const cand = candRaw ? JSON.parse(candRaw) : null;
@@ -711,6 +702,7 @@ export default function Chat() {
   }, [currentSession, index, input, dispatch, navigate, completed]);
 
   
+  
   const handleInputChange = useCallback((val) => {
     try {
       hasEditedRef.current = true;
@@ -719,7 +711,12 @@ export default function Chat() {
       const q = currentSession.questions[index] || null;
       const existing = (q && q.answer) || {};
       
-      dispatch(updateQuestion({ index, patch: { answer: { ...existing, text: String(val || '') } } }));
+      try {
+        dispatch(updateQuestion({ index, patch: { answer: { ...existing, text: String(val || '') } } }));
+      } catch (e) {
+        
+        console.warn('dispatch updateQuestion failed in handleInputChange', e);
+      }
     } catch (e) {
       console.warn('handleInputChange failed', e);
     }
@@ -746,102 +743,128 @@ export default function Chat() {
       currentSession.questions &&
       currentSession.questions[index]) ||
     DEFAULT_QUESTIONS[index];
-  const perQError = qErrors && qErrors[index];
+  const isSessionCompleted = (currentSession && currentSession.status === 'completed') || completed;
+  
   return (
-    <Card style={{ minHeight: 300 }}>
-      <Title level={3}>Chat / Interview</Title>
-      {!currentSession || qLoading ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Spin /> Preparing interview...
+    <div className="max-w-4xl mx-auto">
+      <div className="card-surface">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-semibold">AI Interview Chat</h3>
+          <div className="chat-meta">Question {index + 1} of {(currentSession && currentSession.questions && currentSession.questions.length) || DEFAULT_QUESTIONS.length} — <span className="font-medium">{q.difficulty}</span></div>
         </div>
-      ) : (
-        <>
-          {completed && (
-            <div style={{ marginBottom: 12 }}>
-              {summaryLoading ? (
-                <div>
-                  <Spin /> Generating summary...
-                </div>
-              ) : summary ? (
-                <div>
-                  <Alert
-                    type="success"
-                    message="Interview complete — summary available below."
-                  />
-                  <div style={{ background: '#fafafa', padding: 12, marginTop: 8 }}>
-                    <div><strong>Total:</strong> {typeof summary.totalScore === 'number' ? `${summary.totalScore}/60` : (typeof summary.totalScore === 'string' ? summary.totalScore : '—')}</div>
-                    {Array.isArray(summary.evaluations) && summary.evaluations.length ? (
-                      <div style={{ marginTop: 8 }}>
-                        <strong>Per-question evaluations:</strong>
-                        <ol>
-                          {summary.evaluations.map((ev, i) => (
-                            <li key={i} style={{ marginBottom: 6 }}>
-                              <div><strong>Q{i + 1}:</strong> {typeof ev.score === 'number' ? `${ev.score}/10` : (ev.score == null ? '—' : String(ev.score))}</div>
-                              <div style={{ fontSize: 13, color: '#333' }}>{ev.feedback || 'No feedback'}</div>
-                            </li>
-                          ))}
-                        </ol>
-                      </div>
-                    ) : (
-                      <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(summary, null, 2)}</pre>
-                    )}
+
+        {!currentSession || qLoading ? (
+          
+          (!currentSession && incompleteSnap) ? (
+            <div className="mb-4">
+              <div className="alert alert-warning">No active interview found. We detected a previous incomplete session.</div>
+              <div style={{ display: 'flex', gap: 12, marginTop: 8 }}>
+                <button className="btn" onClick={() => { try { localStorage.removeItem('incompleteSession') } catch(e) { void e } navigate('/interviewee') }}>Go to Home</button>
+                <button className="btn btn-primary" onClick={() => { try { dispatch(restoreSession(incompleteSnap)); dispatch(resumeSession()); navigate('/chat'); } catch(e) { console.warn(e) } }}>Restore session</button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2"><Spin /> Preparing interview...</div>
+          )
+        ) : (
+          <>
+            {completed && (
+              <div className="mb-4">
+                {summaryLoading ? (
+                  <div className="flex items-center gap-2"><Spin /> Generating summary...</div>
+                ) : summary ? (
+                  <div>
+                    <div className="alert alert-success">Interview complete — summary available below.</div>
+                    <div className="bg-base-200 p-4 rounded mt-2">
+                      <div><strong>Total:</strong> {typeof summary.totalScore === 'number' ? `${summary.totalScore}/60` : (typeof summary.totalScore === 'string' ? summary.totalScore : '—')}</div>
+                      {Array.isArray(summary.evaluations) && summary.evaluations.length ? (
+                        <div className="mt-2">
+                          <strong>Per-question evaluations:</strong>
+                          <ol className="list-decimal list-inside mt-2 space-y-2">
+                            {summary.evaluations.map((ev, i) => (
+                              <li key={i} className="space-y-1">
+                                <div><strong>Q{i + 1}:</strong> {typeof ev.score === 'number' ? `${ev.score}/10` : (ev.score == null ? '—' : String(ev.score))}</div>
+                                <div className="text-sm text-neutral">{ev.feedback || 'No feedback'}</div>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      ) : (
+                        <pre className="whitespace-pre-wrap">{JSON.stringify(summary, null, 2)}</pre>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div>
-                  <Alert
-                    type="info"
-                    message="Interview complete. Waiting for summary..."
-                  />
-                </div>
-              )}
+                ) : (
+                  <div className="alert alert-info">Interview complete. Waiting for summary...</div>
+                )}
+              </div>
+            )}
+
+            {summaryError && (
+              <div className="mb-4">
+                <div className="alert alert-error">Summary generation failed: {summaryError}</div>
+              </div>
+            )}
+
+            <TimerProgress timeLeft={timeLeft} />
+            {isSessionCompleted && (
+              <div className="mb-4">
+                <div className="alert alert-success">Interview completed — read-only view. You can review answers below.</div>
+              </div>
+            )}
+
+            <div className="chat-container">
+              <div className="messages" id="messages" ref={messagesRef}>
+                {(currentSession && Array.isArray(currentSession.questions) ? currentSession.questions : DEFAULT_QUESTIONS)
+                  .map((qq, i) => ({ qq, i }))
+                  .filter(({ i }) => i <= index)
+                  .map(({ qq, i }) => {
+                    
+                    const hasAnswer = qq && qq.answer && qq.answer.submittedAt;
+                    const rawText = qq && qq.answer && typeof qq.answer.text === 'string' ? qq.answer.text : null;
+                    const isCurrent = i === index;
+                    const displayText = hasAnswer ? (rawText && String(rawText).trim() ? rawText : '(not answered)') : null;
+                    return (
+                      <div key={i}>
+                        <div className="message-row ai">
+                          <div className={`bubble ai`}> 
+                            <div className="text-sm font-medium">Q{i + 1}: {qq.text}</div>
+                            <div className="meta">{qq.difficulty}</div>
+                          </div>
+                        </div>
+                        {hasAnswer && (
+                          <div className="message-row user">
+                            <div className="bubble user">
+                              <div>{displayText}</div>
+                            </div>
+                          </div>
+                        )}
+                        
+                        {isCurrent && !hasAnswer && (
+                          <div className="message-row ai">
+                            <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Answer the question below</div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+              </div>
+
+              <div className="chat-input-area">
+                <textarea
+                  className="chat-input"
+                  rows={3}
+                  value={input}
+                  onChange={(e) => handleInputChange(e.target.value)}
+                  placeholder={isSessionCompleted ? 'Interview completed — read-only' : 'Type your answer here'}
+                  disabled={submittedThisQuestion || isSessionCompleted}
+                />
+                <button className="send-btn" onClick={handleSubmit} disabled={submittedThisQuestion || isSessionCompleted}>{isSessionCompleted ? 'Completed' : (submittedThisQuestion ? 'Submitted' : 'Send')}</button>
+              </div>
             </div>
-          )}
-          {summaryError && (
-            <div style={{ marginBottom: 12 }}>
-              <Alert
-                type="error"
-                message={`Summary generation failed: ${summaryError}`}
-              />
-            </div>
-          )}
-          <Paragraph>
-            Question {index + 1} of{" "}
-            {(currentSession &&
-              currentSession.questions &&
-              currentSession.questions.length) ||
-              DEFAULT_QUESTIONS.length}{" "}
-            — <strong>{q.difficulty}</strong>
-          </Paragraph>
-          <TimerProgress timeLeft={timeLeft} />
-          <div style={{ marginBottom: 12 }}>
-            <QuestionDisplay
-              qLoading={qLoading}
-              qError={qError}
-              perQError={perQError}
-              questionText={questionText}
-              q={q}
-              index={index}
-              fetchQuestion={fetchQuestion}
-              dispatch={dispatch}
-              updateQuestion={updateQuestion}
-              setQLoading={setQLoading}
-              setQError={setQError}
-              setQErrors={setQErrors}
-            />
-            <AnswerBox
-              input={input}
-              setInput={handleInputChange}
-              submittedThisQuestion={submittedThisQuestion}
-            />
-          </div>
-          <Controls
-            onSkip={() => setTimeLeft(0)}
-            onSubmit={handleSubmit}
-            submittedThisQuestion={submittedThisQuestion}
-          />
-        </>
-      )}
-    </Card>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
